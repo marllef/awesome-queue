@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/marllef/awesome-queue/modules/queue"
 	"github.com/marllef/awesome-queue/pkg/frameworks/database"
@@ -13,17 +16,45 @@ func main() {
 	ctx := context.Background()
 
 	// New Redis Connection
-	container, err := database.NewRedisDB(ctx)
+	redis, err := database.NewRedisDB(ctx)
 	if err != nil {
 		log.Errorf("Error on connect to Redis: %v", err)
 		return
 	}
 
 	// New queue
-	messageQueue := queue.NewQueue("Messages", container, log)
+	message_queue := queue.NewQueue("Messages", redis, log)
+	notification_queue := queue.NewQueue("Notification", redis, log)
 
-	if err = messageQueue.JoinConsumerGroup("message-consumer-group"); err != nil {
-		log.Errorf("Error on create group on Queue: %s", err)
+	// Join on Consumer Groups
+	if err = message_queue.JoinConsumerGroup("message-consumer-group"); err != nil {
+		log.Errorf("Error on join group: %s", err)
 	}
 
+	if err = notification_queue.JoinConsumerGroup("notification-consumer-group"); err != nil {
+		log.Errorf("Error on join group: %s", err)
+	}
+
+	go message_queue.Proccess(func(id string, values map[string]interface{}) error {
+		log.Infof("[Processing] Message Id: %s | Message Type: %v", id, values["type"])
+		return nil
+	})
+
+	go notification_queue.Proccess(func(id string, values map[string]interface{}) error {
+		log.Infof("[Processing] Message Id: %s | Message Type: %v", id, values["type"])
+		return nil
+	})
+
+	channel := make(chan os.Signal, 5)
+	signal.Notify(channel, os.Interrupt, syscall.SIGTERM)
+
+	for {
+		select {
+		case <-channel:
+			log.Infof("Interrupt received, exiting")
+			return
+		default:
+			continue
+		}
+	}
 }

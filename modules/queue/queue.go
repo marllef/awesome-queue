@@ -16,6 +16,7 @@ type queue struct {
 	client  *redis.Client
 	context context.Context
 	log     *logger.Logger
+	group   string
 }
 
 var queues = make(map[string]*queue)
@@ -26,6 +27,7 @@ func NewQueue(name string, container database.RedisDB, log *logger.Logger) *queu
 		client:  container.GetClient(),
 		context: container.GetContext(),
 		log:     log,
+		group:   "",
 	}
 
 	queues[name] = newQueue
@@ -50,19 +52,50 @@ func (q *queue) Publish(values map[string]interface{}) error {
 	return nil
 }
 
-func (q *queue) JoinConsumerGroup(group_name string) (err error) {
-	q.client.XGroupCreateMkStream(q.context, q.name, group_name, "0")
-	if err = q.client.XGroupCreateConsumer(q.context, q.name, group_name, configs.Env.RedisConsumerID).Err(); err != nil {
+func (q *queue) JoinConsumerGroup(group string) (err error) {
+	q.client.XGroupCreateMkStream(q.context, q.name, group, "0")
+	if err = q.client.XGroupCreateConsumer(q.context, q.name, group, configs.Env.RedisConsumerID).Err(); err != nil {
 		return err
 	}
+	q.group = group
+
+	q.log.Infof("Successfuly joined on group '%s'", group)
 	return nil
 }
 
-func (q *queue) Consume() error {
+func (q *queue) Proccess(handler func(id string, values map[string]interface{}) error) error {
 
-	return nil
-}
+	args := &redis.XReadGroupArgs{
+		Group:    q.group,
+		Consumer: configs.Env.RedisConsumerID,
+		Streams:  []string{q.name, ">"},
+		Block:    0,
+	}
 
-func (q *queue) Proccess(handle func() error) error {
-	return handle()
+	for {
+		entries, err := q.client.XReadGroup(q.context, args).Result()
+
+		if err != nil {
+			return err
+		}
+
+		for _, entrie := range entries {
+			for _, message := range entrie.Messages {
+				messageID := message.ID
+				values := message.Values
+				q.log.Infof("[%s] New message received. Processing...", q.name)
+				if err := handler(messageID, values); err != nil {
+					q.log.Errorf("Message [%s] - Failed to proccess message: %v", messageID, err)
+					continue
+				}
+
+				if err := q.client.XAck(q.context, q.name, q.group, messageID).Err(); err != nil {
+					q.log.Warnf("Message [%s] - Failed to ack message: %s", messageID, err)
+					continue
+				}
+
+				q.log.Infof("Message [%s] - Success to proccess message.", messageID)
+			}
+		}
+	}
 }
