@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/marllef/awesome-queue/modules/queue/internal/model"
 	"github.com/marllef/awesome-queue/pkg/configs"
 	"github.com/marllef/awesome-queue/pkg/frameworks/database"
 	"github.com/marllef/awesome-queue/pkg/utils/logger"
@@ -52,7 +53,7 @@ func (q *queue) Publish(values map[string]interface{}) error {
 	return nil
 }
 
-func (q *queue) JoinConsumerGroup(group string) (err error) {
+func (q *queue) JoinGroup(group string) (err error) {
 	q.client.XGroupCreateMkStream(q.context, q.name, group, "0")
 	if err = q.client.XGroupCreateConsumer(q.context, q.name, group, configs.Env.RedisConsumerID).Err(); err != nil {
 		return err
@@ -63,7 +64,7 @@ func (q *queue) JoinConsumerGroup(group string) (err error) {
 	return nil
 }
 
-func (q *queue) Proccess(handler func(id string, values map[string]interface{}) error) error {
+func (q *queue) Proccess(handler model.HandlerFunc) error {
 
 	args := &redis.XReadGroupArgs{
 		Group:    q.group,
