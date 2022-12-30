@@ -1,0 +1,21 @@
+version: '3.3'
+
+services:
+  redis:
+    container_name: awesome_redis
+    image: redis:7.0.7-alpine 
+    restart: always
+    ports:
+      - '6379:6379'
+    command: redis-server
+  redisinsight:
+    container_name: awesome_redisinsight
+    image: redislabs/redisinsight:latest
+    ports:
+      - '8001:8001'
+    depends_on:
+      - redis
+    volumes:
+      - redisinsight:/db
+volumes:
+  redisinsight:
