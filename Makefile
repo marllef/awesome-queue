@@ -5,7 +5,7 @@ dev:
 	go run ./...
 
 exec:
-	./build/queue
+	./build/consumer
 
 run: compile exec
 

@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
-	"os"
-	"os/signal"
-	"syscall"
+	"net/http"
 
-	"github.com/marllef/awesome-queue/modules/queue"
 	"github.com/marllef/awesome-queue/pkg/frameworks/database"
+	"github.com/marllef/awesome-queue/pkg/frameworks/server"
+	"github.com/marllef/awesome-queue/pkg/queue"
+	"github.com/marllef/awesome-queue/pkg/queue/types"
 	"github.com/marllef/awesome-queue/pkg/utils/logger"
 )
 
@@ -22,39 +22,33 @@ func main() {
 		return
 	}
 
-	// New queue
-	message_queue := queue.NewQueue("Messages", redis, log)
-	notification_queue := queue.NewQueue("Notification", redis, log)
+	mailQueue := queue.NewQueue("mail", redis, log)
 
-	// Join on Consumer Groups
-	if err = message_queue.JoinGroup("message-consumer-group"); err != nil {
-		log.Errorf("Error on join group: %s", err)
-	}
+	mailConsumer := queue.NewConsumer(mailQueue, "mail-consumer-group")
 
-	if err = notification_queue.JoinGroup("notification-consumer-group"); err != nil {
-		log.Errorf("Error on join group: %s", err)
-	}
-
-	go message_queue.Proccess(func(id string, values map[string]interface{}) error {
-		log.Infof("[Processing] Message Id: %s | Message Type: %v", id, values["type"])
+	mailConsumer.Consume(func(id string, values map[string]interface{}) error {
+		log.Infof("New Message Processing... | Values: %v", values)
 		return nil
 	})
 
-	go notification_queue.Proccess(func(id string, values map[string]interface{}) error {
-		log.Infof("[Processing] Message Id: %s | Message Type: %v", id, values["type"])
-		return nil
+	app := server.NewServer()
+
+	app.AddRoute("pub", server.Route{
+		Path:        "/pub",
+		Middlewares: server.Middlewares{},
+		Controller: func(res http.ResponseWriter, req *http.Request) {
+			err := mailQueue.Publish(types.Values{
+				"type":    "mail",
+				"message": "Oi, Moanoite",
+			})
+			if err != nil {
+				log.Errorf("Error on send mail: %v", err)
+				res.WriteHeader(500)
+				return
+			}
+		},
+		Methods: []string{"GET"},
 	})
 
-	channel := make(chan os.Signal, 5)
-	signal.Notify(channel, os.Interrupt, syscall.SIGTERM)
-
-	for {
-		select {
-		case <-channel:
-			log.Infof("Interrupt received, exiting")
-			return
-		default:
-			continue
-		}
-	}
+	app.Serve()
 }
